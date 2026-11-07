@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Moegotchi",
+  "version": "0.1",
+  "permissions": ["tabs", "storage", "activeTab"],
+  "host_permissions": ["<all_urls>", "https://generativelanguage.googleapis.com/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content.js"] }],
+  "action": { "default_popup": "popup.html" }
+}
