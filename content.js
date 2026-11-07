@@ -264,9 +264,15 @@
 
   // --- Verdicts from the background script ---
   let countdown = null;
-  // "I need this tab!" spares this tab for 5 minutes. Without it, the next verdict (seconds later while
-  // browsing YouTube) would start a new countdown and the button would be pointless.
-  let sparedUntil = 0;
+  // "I need this tab!" spares that one page (that video), not the whole tab: YouTube swaps videos without
+  // reloading, so sparing the tab would spare every video you click next. Ignores #hash and YouTube's &t= timestamp.
+  let sparedUrl = null;
+  const pageKey = (url) => {
+    const u = new URL(url);
+    u.hash = "";
+    u.searchParams.delete("t");
+    return u.href;
+  };
   function clearCountdown() {
     clearInterval(countdown);
     countdown = null;
@@ -288,7 +294,7 @@
       say(m.message || "", { sticky: true });
       return;
     }
-    if (m.willClose && Date.now() < sparedUntil) {
+    if (m.willClose && sparedUrl && m.url && pageKey(m.url) === sparedUrl) {
       say(m.message || "");
       return;
     }
@@ -302,7 +308,7 @@
       count.textContent = `Closing this tab in ${n}...`;
       keep.onclick = () => {
         clearCountdown();
-        sparedUntil = Date.now() + 5 * 60 * 1000;
+        sparedUrl = pageKey(m.url || location.href);
         say("...fine. Don't make me regret this.");
       };
       countdown = setInterval(() => {

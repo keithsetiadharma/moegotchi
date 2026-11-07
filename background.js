@@ -221,8 +221,10 @@ async function judge(tab) {
   const affection = pet.affection ?? AFFECTION.start;
 
   try {
-    // Affection band is in the key so a cached line's tone still matches how upset the pet is
-    const key = `${dere}|${task}|${bandFor(affection)}|${tab.url}`;
+    // Affection band is in the key so a cached line's tone still matches how upset the pet is.
+    // Title too: a Google Doc keeps its URL while you type, so "Untitled document" and "Binary tree notes"
+    // must not share a cached verdict.
+    const key = `${dere}|${task}|${bandFor(affection)}|${tab.url}|${tab.title}`;
     let verdict = cache.get(key);
     if (!verdict) {
       // Show the pet is thinking right away (text only, the mood stays)
@@ -245,7 +247,9 @@ async function judge(tab) {
               ? `This site is always a distraction: on_task is false and sure is true.\n`
               : `Decide if this tab plausibly helps with the task. Judge the actual content, not the site: ` +
                 `a lecture or tutorial on the task topic is on task even on YouTube; entertainment, vlogs, memes and social feeds are not. ` +
-                `Set sure to false only if the title, URL and details aren't enough to tell.\n`) +
+                `Give the benefit of the doubt: tools for doing work (documents, notes, code editors, search engines, course sites) ` +
+                `are on task even when blank or untitled, since the user may be just starting. Only mark off task when it's clearly a distraction. ` +
+                `Set sure to false only if the title, URL and details aren't enough to tell, and then write lines that assume they're working.\n`) +
             `Reply as JSON: {"on_task": boolean, "sure": boolean, "messages": [4 different lines reacting to this tab, each with different wording]}`;
           console.log("[moegotchi] judging", tab.url, image ? "with screenshot" : "text only", context ? `| ${context}` : "");
           return askGemini(prompt, apiKey, MODELS.quick, VERDICT_SCHEMA, image);
@@ -261,6 +265,8 @@ async function judge(tab) {
             context = await pageContext(tab, true);
             verdict = await ask(null);
           }
+          // Still unsure: assume they're working. Wrongly scolding someone mid-work is far worse than missing a slack-off.
+          if (verdict.sure === false) verdict = { ...verdict, on_task: true };
         }
       }
       cache.set(key, verdict);
@@ -285,9 +291,11 @@ async function judge(tab) {
     await tell(tab, {
       type: "verdict",
       on_task: verdict.on_task,
+      url: tab.url, // which page this verdict is about (for "I need this tab!" sparing)
       message: pickLine(verdict.messages),
       mood: next.mood,
-      willClose: d.closes && !verdict.on_task,
+      // Only close tabs when Gemini is sure it's a distraction: closing a tab you needed is the costliest mistake
+      willClose: d.closes && !verdict.on_task && verdict.sure !== false,
     });
   } catch (e) {
     console.error("[moegotchi] judge failed", e);
