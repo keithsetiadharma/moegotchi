@@ -48,20 +48,38 @@
   // Affection bar: the pet's persistent health
   const bar = document.createElement("div");
   bar.title = "affection";
-  bar.style.cssText = "width:96px;height:6px;margin:4px auto 0;background:#eee;border:1px solid #333;border-radius:4px;overflow:hidden";
+  bar.style.cssText = "width:96px;height:6px;background:#eee;border:1px solid #333;border-radius:4px;overflow:hidden";
   const fill = document.createElement("div");
   fill.style.cssText = "height:100%;width:50%;background:#f69;transition:width .5s";
   bar.append(fill);
   function setAffection(a) {
     fill.style.width = `${a ?? 50}%`;
   }
+  // Floating "+3%" / "-15%" next to the bar whenever affection changes, fading out after a moment
+  const delta = document.createElement("span");
+  delta.style.cssText =
+    "position:absolute;left:calc(50% + 52px);top:50%;transform:translateY(-50%);" +
+    "font-size:11px;font-weight:700;white-space:nowrap;opacity:0;transition:opacity .4s";
+  let deltaTimer = null;
+  function showDelta(d) {
+    if (!d) return;
+    delta.textContent = `${d > 0 ? "+" : ""}${d}%`;
+    delta.style.color = d > 0 ? "#2a2" : "#d22";
+    delta.style.opacity = "1";
+    clearTimeout(deltaTimer);
+    deltaTimer = setTimeout(() => (delta.style.opacity = "0"), 1500);
+  }
+  // Bar centered under the sprite; delta positioned just right of it so it never shifts the bar
+  const barRow = document.createElement("div");
+  barRow.style.cssText = "position:relative;display:flex;justify-content:center;margin-top:4px";
+  barRow.append(bar, delta);
 
   const msg = document.createElement("div");
   msg.style.cssText = "font-size:13px;margin-top:4px";
   const btn = document.createElement("button");
   btn.textContent = "I need this tab!";
   btn.style.cssText = "display:none;margin-top:6px;cursor:pointer";
-  box.append(face, bar, msg, btn);
+  box.append(face, barRow, msg, btn);
   document.documentElement.appendChild(box);
 
   // One pet shared by every tab: start from the last saved mood, and follow mood changes made from any tab
@@ -74,6 +92,7 @@
     if (pet) {
       setMood(pet.mood);
       setAffection(pet.affection);
+      showDelta(pet.affection - (changes.pet.oldValue?.affection ?? pet.affection));
     }
   });
 

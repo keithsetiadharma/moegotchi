@@ -4,8 +4,14 @@
 const MODELS = { quick: "gemini-3.1-flash-lite", smart: "gemini-3.8-flash" };
 
 // true = skip Gemini and fake a verdict from the URL, for testing the pet when the API is down
-const MOCK = true;
-const DISTRACTING = /youtube|reddit|twitter|x\.com|instagram|tiktok|netflix|twitch/;
+const MOCK = false;
+// True if the URL is on one of these domains or their subdomains (www., m., ...).
+// Matching the hostname, not raw text: a plain /x\.com/ would also match "dropbox.com".
+function onSite(url, domains) {
+  const host = new URL(url).hostname;
+  return domains.some((d) => host === d || host.endsWith("." + d));
+}
+const DISTRACTING = ["youtube.com", "reddit.com", "twitter.com", "x.com", "instagram.com", "tiktok.com", "netflix.com", "twitch.tv"];
 // Canned lines per dere and affection band, so the mock's tone tracks affection like Gemini's does
 const MOCK_LINES = {
   genki: {
@@ -30,9 +36,9 @@ const MOCK_LINES = {
   },
 };
 function mockVerdict(tab, dere, affection) {
-  const on_task = !DISTRACTING.test(tab.url);
+  const on_task = !onSite(tab.url, DISTRACTING);
   const lines = (MOCK_LINES[dere] || MOCK_LINES.genki)[bandFor(affection)];
-  return { on_task, message: `[mock] ${on_task ? lines.on : lines.off}` };
+  return { on_task, messages: [`[mock] ${on_task ? lines.on : lines.off}`] };
 }
 
 // Affection: the pet's persistent health (0-100). Lost fast when you slack, won back slowly by focusing.
@@ -82,8 +88,10 @@ let debounce = null;
 // No mood field: mood comes from affection in code, so it can't jump straight back to happy.
 const VERDICT_SCHEMA = {
   type: "OBJECT",
-  properties: { on_task: { type: "BOOLEAN" }, message: { type: "STRING" } },
-  required: ["on_task", "message"],
+  // Several lines per call: the pet rotates through them on repeat visits, so it doesn't repeat itself
+  // sure: false = "the text wasn't enough to tell", which triggers a second look with a screenshot
+  properties: { on_task: { type: "BOOLEAN" }, sure: { type: "BOOLEAN" }, messages: { type: "ARRAY", items: { type: "STRING" } } },
+  required: ["on_task", "sure", "messages"],
 };
 const RECAP_SCHEMA = {
   type: "OBJECT",
@@ -91,13 +99,16 @@ const RECAP_SCHEMA = {
   required: ["recap"],
 };
 
-async function askGemini(prompt, apiKey, model, schema) {
+// image: optional base64 JPEG sent alongside the prompt (Gemini is multimodal)
+async function askGemini(prompt, apiKey, model, schema, image) {
+  const parts = [{ text: prompt }];
+  if (image) parts.push({ inline_data: { mime_type: "image/jpeg", data: image } });
   const request = {
     method: "POST",
     // Key in a header, not the URL: URLs end up in logs and history
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
+      contents: [{ parts }],
       generationConfig: { responseMimeType: "application/json", responseSchema: schema },
     }),
   };
@@ -130,6 +141,57 @@ async function tell(tab, msg) {
   }
 }
 
+// Always off task, whatever the content: Gemini only writes the reaction, no screenshot needed
+const ALWAYS_OFF = ["tiktok.com", "instagram.com", "twitch.tv", "twitter.com", "x.com", "netflix.com"];
+// Always screenshotted: the title alone can't tell a lecture from a MrBeast video.
+// Any other site only gets a screenshot if Gemini says the text wasn't enough (keeps cost and privacy in check).
+const SCREENSHOT_SITES = ["youtube.com"];
+
+// Cheap text clues from the page itself: its description, and on YouTube the channel name
+async function pageContext(tab) {
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => {
+        const meta = (n) => document.querySelector(`meta[name="${n}"], meta[property="${n}"]`)?.content || "";
+        const channel = document.querySelector("ytd-watch-metadata ytd-channel-name a, ytd-reel-video-renderer[is-active] ytd-channel-name a")?.textContent;
+        return [channel && `channel: ${channel.trim()}`, meta("description") || meta("og:description")].filter(Boolean).join(" | ");
+      },
+    });
+    return (result || "").slice(0, 300);
+  } catch {
+    return ""; // pages we can't script (Web Store etc.): judge on title and URL alone
+  }
+}
+
+// Screenshot of the visible tab, shrunk to 640px wide so it costs a few hundred tokens instead of thousands
+async function screenshot(tab) {
+  try {
+    // captureVisibleTab grabs whatever is on screen, so make sure it's still this tab
+    if (!(await chrome.tabs.get(tab.id)).active) return null;
+    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 70 });
+    const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
+    const scale = Math.min(1, 640 / bitmap.width);
+    const canvas = new OffscreenCanvas(Math.round(bitmap.width * scale), Math.round(bitmap.height * scale));
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const bytes = new Uint8Array(await (await canvas.convertToBlob({ type: "image/jpeg", quality: 0.6 })).arrayBuffer());
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(binary); // base64, chunked because spreading a whole image into one call overflows the stack
+  } catch (e) {
+    console.warn("[moegotchi] screenshot failed, judging without it", e);
+    return null;
+  }
+}
+
+// Random line from a verdict, avoiding the one shown last time
+let lastLine = "";
+function pickLine(lines = []) {
+  const options = lines.filter((l) => l !== lastLine);
+  lastLine = options[Math.floor(Math.random() * options.length)] ?? lines[0] ?? "...";
+  return lastLine;
+}
+
 // Verdicts by dere + task + URL, so flipping back and forth between tabs doesn't spend quota.
 // Lives in memory, so it resets whenever Chrome puts the service worker to sleep. Fine for saving quota.
 const cache = new Map();
@@ -143,15 +205,6 @@ async function judge(tab) {
   const d = DERE[dere] || DERE.genki;
   const affection = pet.affection ?? AFFECTION.start;
 
-  const prompt =
-    `${d.persona}\n` +
-    `Your affection for the user: ${affection}/100. Below 40 you're still upset with them and they must win you back, ` +
-    `even while they're on task; above 70 you adore them. Let it show in your tone.\n` +
-    `The user's current task: "${task}"\n` +
-    `Their current tab: title="${tab.title}" url="${tab.url}"\n` +
-    `Decide if this tab plausibly helps with the task (a lecture video on the task topic is on task; unrelated videos/social media are not). ` +
-    `Reply as JSON: {"on_task": boolean, "message": string}`;
-
   try {
     // Affection band is in the key so a cached line's tone still matches how upset the pet is
     const key = `${dere}|${task}|${bandFor(affection)}|${tab.url}`;
@@ -159,16 +212,61 @@ async function judge(tab) {
     if (!verdict) {
       // Show the pet is thinking right away (text only, the mood stays)
       tell(tab, { type: "say", message: "hmm..." }).catch(() => {});
-      verdict = MOCK ? mockVerdict(tab, dere, affection) : await askGemini(prompt, apiKey, MODELS.quick, VERDICT_SCHEMA);
+      if (MOCK) verdict = mockVerdict(tab, dere, affection);
+      else {
+        // Only gathered on a cache miss: no point paying for a screenshot we won't send
+        const context = await pageContext(tab);
+        const alwaysOff = onSite(tab.url, ALWAYS_OFF);
+        const ask = (image) => {
+          const prompt =
+            `${d.persona}\n` +
+            `Your affection for the user: ${affection}/100. Below 40 you're still upset with them and they must win you back, ` +
+            `even while they're on task; above 70 you adore them. Let it show in your tone.\n` +
+            `The user's current task: "${task}"\n` +
+            `Their current tab: title="${tab.title}" url="${tab.url}"\n` +
+            (context ? `Page details: ${context}\n` : "") +
+            (image ? `A screenshot of the tab is attached. Ignore the small pet widget in the bottom-right corner.\n` : "") +
+            (alwaysOff
+              ? `This site is always a distraction: on_task is false and sure is true.\n`
+              : `Decide if this tab plausibly helps with the task. Judge the actual content, not the site: ` +
+                `a lecture or tutorial on the task topic is on task even on YouTube; entertainment, vlogs, memes and social feeds are not. ` +
+                `Set sure to false only if the title, URL and details aren't enough to tell.\n`) +
+            `Reply as JSON: {"on_task": boolean, "sure": boolean, "messages": [4 different lines reacting to this tab, each with different wording]}`;
+          console.log("[moegotchi] judging", tab.url, image ? "with screenshot" : "text only", context ? `| ${context}` : "");
+          return askGemini(prompt, apiKey, MODELS.quick, VERDICT_SCHEMA, image);
+        };
+
+        if (alwaysOff) verdict = { ...(await ask(null)), on_task: false };
+        else if (onSite(tab.url, SCREENSHOT_SITES)) verdict = await ask(await screenshot(tab));
+        else {
+          verdict = await ask(null);
+          // Site doesn't fit either category and the text wasn't enough: take a second look with a screenshot
+          if (verdict.sure === false) {
+            const image = await screenshot(tab);
+            if (image) verdict = await ask(image);
+          }
+        }
+      }
       cache.set(key, verdict);
     }
     console.log("[moegotchi]", tab.title, verdict);
     // Session log for the recap: one entry per verdict, so time on a tab = gap until the next entry
     const { log = [] } = await chrome.storage.local.get("log");
+    const prev = log.at(-1);
     log.push({ t: Date.now(), title: (tab.title || tab.url).slice(0, 60), on_task: verdict.on_task });
     await chrome.storage.local.set({ log: log.slice(-100) });
-    const next = await changeAffection(verdict.on_task ? AFFECTION.onTask : AFFECTION.offTask, verdict.on_task);
-    await tell(tab, { type: "verdict", ...verdict, mood: next.mood, willClose: d.closes && !verdict.on_task });
+    // Only a switch between on and off task changes affection here (getting caught / coming back).
+    // Otherwise scrolling Shorts, a new URL every video, would cost -15 per video. Staying put is handled by the minute tick.
+    const switched = !prev || prev.on_task !== verdict.on_task;
+    const delta = !switched ? 0 : verdict.on_task ? AFFECTION.onTask : AFFECTION.offTask;
+    const next = await changeAffection(delta, verdict.on_task);
+    await tell(tab, {
+      type: "verdict",
+      on_task: verdict.on_task,
+      message: pickLine(verdict.messages),
+      mood: next.mood,
+      willClose: d.closes && !verdict.on_task,
+    });
   } catch (e) {
     console.error("[moegotchi] judge failed", e);
     // Surface the failure on the pet too: the service worker console is easy to miss
@@ -236,8 +334,15 @@ chrome.alarms.onAlarm.addListener(async () => {
 
 chrome.tabs.onActivated.addListener(({ tabId }) => schedule(tabId));
 chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
-  // Only the active tab: a background tab finishing its load would otherwise cancel the pending judge
-  if (info.status === "complete" && tab.active) schedule(tabId);
+  // Only the active tab: a background tab finishing its load would otherwise cancel the pending judge.
+  // info.url catches in-page navigation (YouTube, Docs, etc. change the URL without a full page load)
+  if (tab.active && (info.status === "complete" || info.url)) schedule(tabId);
+});
+// Switching between Chrome windows doesn't fire onActivated, so check the newly focused window's tab
+chrome.windows.onFocusChanged.addListener(async (windowId) => {
+  if (windowId === chrome.windows.WINDOW_ID_NONE) return; // Chrome lost focus to another app
+  const [tab] = await chrome.tabs.query({ active: true, windowId });
+  if (tab) schedule(tab.id);
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
