@@ -211,7 +211,7 @@ async function judge(tab) {
     let verdict = cache.get(key);
     if (!verdict) {
       // Show the pet is thinking right away (text only, the mood stays)
-      tell(tab, { type: "say", message: "hmm..." }).catch(() => {});
+      tell(tab, { type: "say", message: "hmm...", thinking: true }).catch(() => {});
       if (MOCK) verdict = mockVerdict(tab, dere, affection);
       else {
         // Only gathered on a cache miss: no point paying for a screenshot we won't send

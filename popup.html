@@ -3,32 +3,102 @@
 <head>
   <meta charset="utf-8" />
   <style>
-    body { width: 260px; font-family: system-ui, sans-serif; padding: 12px; }
-    label { display: block; font-size: 12px; margin-top: 8px; font-weight: 600; }
-    input, select, button { width: 100%; box-sizing: border-box; margin-top: 3px; padding: 6px; }
-    h3 { margin: 0 0 4px; }
-    #closed { font-size: 12px; margin-top: 8px; }
-    #recap { font-size: 12px; margin-top: 8px; white-space: pre-wrap; }
-    #recap small { color: #666; }
+    @font-face { font-family: "Moe Pixel"; src: url(fonts/PixelifySans.ttf); }
+    :root { --ink:#2b2135; --paper:#fff8ef; --bg:#f3ecfb; --pink:#ff6b9d; --low:#8f7fa8; --high:#ff3d7f; --empty:#eadff0; --muted:#7a6d88; }
+    * { box-sizing: border-box; }
+    body { width: 300px; margin: 0; padding: 14px; background: var(--bg); color: var(--ink);
+           font: 15px/1.25 "Moe Pixel", monospace; -webkit-font-smoothing: none; }
+    /* Pixel-notched outline, same as the pet widget */
+    .px { background: var(--paper);
+          box-shadow: 0 -3px 0 var(--ink), 0 3px 0 var(--ink), -3px 0 0 var(--ink), 3px 0 0 var(--ink), 0 7px 0 rgba(43,33,53,.18); }
+    .card { padding: 10px; margin: 3px 3px 16px; }
+
+    header { display: flex; gap: 10px; align-items: center; }
+    header img { width: 64px; height: 64px; image-rendering: pixelated; animation: bob 1.6s steps(2) infinite; }
+    h1 { margin: 0; font-size: 22px; letter-spacing: 1px; }
+    .sub { color: var(--muted); font-size: 13px; }
+    .hud { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+    .bar { display: flex; gap: 2px; padding: 2px; background: var(--ink); }
+    .seg { width: 8px; height: 9px; background: var(--empty); }
+    .seg.on { background: var(--seg, var(--pink)); }
+    .num { font-size: 13px; color: var(--muted); }
+
+    label, .label { display: block; font-size: 13px; color: var(--muted); margin: 0 0 4px; }
+    input { width: 100%; padding: 7px 8px; border: 0; outline: 0; font: inherit; color: var(--ink); background: #fff;
+            box-shadow: inset 0 0 0 3px var(--ink); }
+    input:focus { box-shadow: inset 0 0 0 3px var(--pink); }
+    .field { margin-bottom: 12px; }
+
+    /* Dere picker: four pixel tiles instead of a dropdown */
+    .deres { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .deres input { position: absolute; opacity: 0; pointer-events: none; }
+    .deres label { margin: 0; padding: 6px 8px; cursor: pointer; color: var(--ink); background: #fff; box-shadow: inset 0 0 0 3px var(--ink); }
+    .deres label b { display: block; font-weight: 600; }
+    .deres label span { font-size: 12px; color: var(--muted); }
+    .deres input:checked + label { background: var(--pink); color: #fff; }
+    .deres input:checked + label span { color: #ffe3ee; }
+    .deres input:focus-visible + label { outline: 3px dashed var(--ink); outline-offset: 2px; }
+
+    button { all: unset; display: block; width: 100%; box-sizing: border-box; text-align: center; cursor: pointer;
+             padding: 8px; margin-top: 10px; font: inherit; font-size: 16px; color: #fff; background: var(--pink);
+             box-shadow: 0 -3px 0 var(--ink), 0 3px 0 var(--ink), -3px 0 0 var(--ink), 3px 0 0 var(--ink), inset 0 -4px 0 rgba(0,0,0,.18); }
+    button:hover { filter: brightness(1.08); }
+    button:active { transform: translateY(2px); }
+    button.secondary { color: var(--ink); background: var(--paper); margin-top: 14px; }
+
+    details summary { cursor: pointer; font-size: 13px; color: var(--muted); list-style: none; }
+    details summary::before { content: "▸ "; }
+    details[open] summary::before { content: "▾ "; }
+    details[open] summary { margin-bottom: 6px; }
+
+    #recap:empty, #closed:empty { display: none; }
+    #recap p { margin: 0 0 8px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip { font-size: 12px; padding: 2px 6px; background: var(--empty); }
+    #closed a { display: block; padding: 3px 0; color: var(--ink); text-decoration: none; cursor: pointer;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #closed a:hover { color: var(--pink); }
+    @keyframes bob { 50% { transform: translateY(-3px); } }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
   </style>
 </head>
 <body>
-  <h3>Moegotchi</h3>
-  <label>What are you working on?</label>
-  <input id="task" placeholder="finish CMPT assignment" />
-  <label>Choose your dere</label>
-  <select id="dere">
-    <option value="genki">Genki (cheerleader)</option>
-    <option value="tsundere">Tsundere (closes your tabs)</option>
-    <option value="yandere">Yandere (watching you~)</option>
-    <option value="kuudere">Kuudere (deadpan)</option>
-  </select>
-  <label>Gemini API key</label>
-  <input id="apiKey" type="password" placeholder="paste once, stored locally" />
-  <button id="save">Start focusing</button>
-  <button id="end">End session &amp; recap</button>
-  <div id="recap"></div>
-  <div id="closed"></div>
+  <header class="card px">
+    <img id="petSprite" src="sprites/neutral.svg" alt="" />
+    <div>
+      <h1>Moegotchi</h1>
+      <div class="sub" id="petLine">Your focus buddy</div>
+      <div class="hud" title="Affection">
+        <div class="bar" id="bar"></div>
+        <span class="num" id="affNum"></span>
+      </div>
+    </div>
+  </header>
+
+  <section class="card px">
+    <div class="field">
+      <label for="task">What are you working on?</label>
+      <input id="task" placeholder="finish CMPT assignment" />
+    </div>
+    <div class="field">
+      <span class="label">Choose your dere</span>
+      <div class="deres" id="dere">
+        <input type="radio" name="dere" id="d-genki" value="genki" /><label for="d-genki"><b>Genki</b><span>cheerleader</span></label>
+        <input type="radio" name="dere" id="d-tsundere" value="tsundere" /><label for="d-tsundere"><b>Tsundere</b><span>closes your tabs</span></label>
+        <input type="radio" name="dere" id="d-yandere" value="yandere" /><label for="d-yandere"><b>Yandere</b><span>watching you~</span></label>
+        <input type="radio" name="dere" id="d-kuudere" value="kuudere" /><label for="d-kuudere"><b>Kuudere</b><span>deadpan</span></label>
+      </div>
+    </div>
+    <details id="keyBox">
+      <summary id="keyLabel">Gemini API key</summary>
+      <input id="apiKey" type="password" placeholder="paste once, stored locally" />
+    </details>
+    <button id="save">Start focusing</button>
+    <button id="end" class="secondary">End session &amp; recap</button>
+  </section>
+
+  <section id="recap" class="card px"></section>
+  <section id="closed" class="card px"></section>
   <script src="popup.js"></script>
 </body>
 </html>
