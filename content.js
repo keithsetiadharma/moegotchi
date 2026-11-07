@@ -211,7 +211,11 @@
     setMood(p?.mood);
     setAffection(p?.affection);
     pet.classList.toggle("mini", !!petMin);
-    if (petPos) Object.assign(host.style, { right: `${petPos.right}px`, bottom: `${petPos.bottom}px` });
+    // Clamp: a position saved on a big monitor could be off-screen in a smaller window
+    if (petPos) Object.assign(host.style, {
+      right: `${Math.max(0, Math.min(petPos.right, innerWidth - host.offsetWidth))}px`,
+      bottom: `${Math.max(0, Math.min(petPos.bottom, innerHeight - host.offsetHeight))}px`,
+    });
   });
   chrome.storage.onChanged.addListener((changes) => {
     const p = changes.pet?.newValue;
@@ -240,6 +244,7 @@
     host.style.right = `${Math.max(0, Math.min(maxR, drag.right - dx))}px`;
     host.style.bottom = `${Math.max(0, Math.min(maxB, drag.bottom - dy))}px`;
   });
+  stage.addEventListener("pointercancel", () => (drag = null)); // browser took over the gesture: stop following
   stage.addEventListener("pointerup", async () => {
     if (!drag) return;
     const { moved } = drag;
@@ -259,6 +264,9 @@
 
   // --- Verdicts from the background script ---
   let countdown = null;
+  // "I need this tab!" spares this tab for 5 minutes. Without it, the next verdict (seconds later while
+  // browsing YouTube) would start a new countdown and the button would be pointless.
+  let sparedUntil = 0;
   function clearCountdown() {
     clearInterval(countdown);
     countdown = null;
@@ -280,6 +288,10 @@
       say(m.message || "", { sticky: true });
       return;
     }
+    if (m.willClose && Date.now() < sparedUntil) {
+      say(m.message || "");
+      return;
+    }
     clearCountdown();
     say(m.message || "", { sticky: m.willClose });
 
@@ -290,6 +302,7 @@
       count.textContent = `Closing this tab in ${n}...`;
       keep.onclick = () => {
         clearCountdown();
+        sparedUntil = Date.now() + 5 * 60 * 1000;
         say("...fine. Don't make me regret this.");
       };
       countdown = setInterval(() => {

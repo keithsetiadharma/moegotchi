@@ -37,6 +37,7 @@ $("save").onclick = async () => {
     // A fresh session: clear the log the recap is built from
     sessionStart: Date.now(),
     log: [],
+    totals: { onMs: 0, offMs: 0 },
   });
   $("save").textContent = "Saved! Get to work.";
 };

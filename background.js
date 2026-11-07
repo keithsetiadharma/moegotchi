@@ -55,13 +55,20 @@ function moodFor(affection, onTask) {
   return { high: "happy", mid: "neutral", low: "sad" }[bandFor(affection)]; // back on task: only as happy as you've earned
 }
 
-async function changeAffection(delta, onTask) {
-  const { pet = {} } = await chrome.storage.local.get("pet");
-  const affection = Math.max(0, Math.min(100, (pet.affection ?? AFFECTION.start) + delta));
-  const next = { affection, mood: moodFor(affection, onTask) };
-  // Saving updates the pet on every tab (content.js listens for storage changes)
-  await chrome.storage.local.set({ pet: next });
-  return next;
+// Changes run one at a time: storage reads and writes are async, so two overlapping changes could both read 50,
+// both write 40, and one -10 would be lost. Each change waits for the previous one to finish.
+let affectionQueue = Promise.resolve();
+function changeAffection(delta, onTask) {
+  const run = affectionQueue.then(async () => {
+    const { pet = {} } = await chrome.storage.local.get("pet");
+    const affection = Math.max(0, Math.min(100, (pet.affection ?? AFFECTION.start) + delta));
+    const next = { affection, mood: moodFor(affection, onTask) };
+    // Saving updates the pet on every tab (content.js listens for storage changes)
+    await chrome.storage.local.set({ pet: next });
+    return next;
+  });
+  affectionQueue = run.catch(() => {});
+  return run;
 }
 
 const DERE = {
@@ -129,7 +136,10 @@ async function askGemini(prompt, apiKey, model, schema, image) {
   // Real token counts from Gemini: prompt (input), candidates (reply), thoughts (hidden reasoning, billed as output)
   const u = data.usageMetadata || {};
   console.log(`[moegotchi] ${model} tokens: in ${u.promptTokenCount}, out ${u.candidatesTokenCount}, thinking ${u.thoughtsTokenCount ?? 0}`);
-  return JSON.parse(data.candidates[0].content.parts[0].text);
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  // e.g. a safety block: there's a response, but no answer in it
+  if (!text) throw new Error(`Gemini gave no answer (${data.candidates?.[0]?.finishReason || data.promptFeedback?.blockReason || "unknown"})`);
+  return JSON.parse(text);
 }
 
 // Send a message to the pet on this tab, injecting the content script first if the tab predates the extension
@@ -256,12 +266,16 @@ async function judge(tab) {
       cache.set(key, verdict);
     }
     console.log("[moegotchi]", tab.title, verdict);
-    // Session log for the recap: one entry per verdict, so time on a tab = gap until the next entry
-    const { log = [] } = await chrome.storage.local.get("log");
+    // Session log for the recap: one entry per verdict, so time on a tab = gap until the next entry.
+    // The log keeps only the last 100 entries (for the recap's timeline), so time totals are kept separately:
+    // otherwise a long Shorts binge (one entry per Short) would push early time out of the stats.
+    const { log = [], totals = { onMs: 0, offMs: 0 } } = await chrome.storage.local.get(["log", "totals"]);
     const prev = log.at(-1);
-    log.push({ t: Date.now(), title: (tab.title || tab.url).slice(0, 60), on_task: verdict.on_task });
-    await chrome.storage.local.set({ log: log.slice(-100) });
-    // Off task: -15 for getting caught, then -5 for every further distraction page (each Short counts).
+    const now = Date.now();
+    if (prev) totals[prev.on_task ? "onMs" : "offMs"] += now - prev.t;
+    log.push({ t: now, title: (tab.title || tab.url).slice(0, 60), on_task: verdict.on_task });
+    await chrome.storage.local.set({ log: log.slice(-100), totals });
+    // Off task: -15 for getting caught, then -10 for every further distraction page (each Short counts).
     // On task: +3 only when coming back, so flipping between work tabs can't farm affection; the minute tick rewards staying.
     const switched = !prev || prev.on_task !== verdict.on_task;
     const delta = verdict.on_task
@@ -284,19 +298,17 @@ async function judge(tab) {
 
 // End-of-session recap, written by the smart model from the session log
 async function recap() {
-  const { apiKey, task, dere = "genki", log = [], sessionStart, pet = {} } = await chrome.storage.local.get(
-    ["apiKey", "task", "dere", "log", "sessionStart", "pet"]
-  );
+  const { apiKey, task, dere = "genki", log = [], totals = { onMs: 0, offMs: 0 }, sessionStart, pet = {} } =
+    await chrome.storage.local.get(["apiKey", "task", "dere", "log", "totals", "sessionStart", "pet"]);
   if (!log.length) return { recap: "Nothing to recap yet. Click Start focusing, then switch some tabs!" };
 
   // Do the math in code, not in the prompt: models are unreliable at arithmetic
+  // Closed entries are already in totals; add the one still open (from the last verdict until now)
   const now = Date.now();
-  let onMs = 0, offMs = 0;
-  log.forEach((e, i) => {
-    const ms = (log[i + 1]?.t ?? now) - e.t;
-    if (e.on_task) onMs += ms;
-    else offMs += ms;
-  });
+  let { onMs, offMs } = totals;
+  const last = log.at(-1);
+  if (last.on_task) onMs += now - last.t;
+  else offMs += now - last.t;
   const mins = (ms) => Math.round(ms / 60000);
   const focus = Math.round((100 * onMs) / (onMs + offMs || 1));
   const stats = `${mins(now - (sessionStart ?? log[0].t))} min session, ${mins(onMs)} on task, ${mins(offMs)} off (${focus}% focused), affection ${pet.affection ?? AFFECTION.start}/100`;
@@ -317,7 +329,7 @@ async function recap() {
   const out = { ...result, stats };
   // Saved so the popup can show it even if it was closed while Gemini was writing.
   // Clearing the log ends the session, which also stops the affection tick.
-  await chrome.storage.local.set({ lastRecap: out, log: [] });
+  await chrome.storage.local.set({ lastRecap: out, log: [], totals: { onMs: 0, offMs: 0 } });
   return out;
 }
 
@@ -328,12 +340,33 @@ function schedule(tabId) {
   clearTimeout(debounce);
   pendingSince ||= Date.now();
   const wait = Math.min(3000, Math.max(0, pendingSince + 6000 - Date.now()));
-  debounce = setTimeout(async () => {
+  debounce = setTimeout(() => {
     pendingSince = 0;
+    runJudge(tabId);
+  }, wait);
+}
+
+// Only one judge at a time. If a new one is requested while Gemini is still answering, remember just the
+// latest tab and judge it right after: overlapping judges would interleave their log and affection updates.
+let judging = false, nextTabId = null;
+async function runJudge(tabId) {
+  if (judging) {
+    nextTabId = tabId;
+    return;
+  }
+  judging = true;
+  try {
     // Re-read the tab: its URL may have changed since the event (it's whatever you're on now that counts)
     const tab = await chrome.tabs.get(tabId).catch(() => null);
-    if (tab && tab.active && tab.url && tab.url.startsWith("http")) judge(tab);
-  }, wait);
+    if (tab && tab.active && tab.url && tab.url.startsWith("http")) await judge(tab);
+  } finally {
+    judging = false;
+    if (nextTabId !== null) {
+      const id = nextTabId;
+      nextTabId = null;
+      runJudge(id);
+    }
+  }
 }
 
 // Every minute of a session, the tab you're sitting on slowly wins back (or loses) affection.
@@ -344,6 +377,10 @@ chrome.alarms.onAlarm.addListener(async () => {
   const { log = [] } = await chrome.storage.local.get("log");
   const last = log.at(-1);
   if (!last) return; // no session running
+  // Only count minutes you actually spend in Chrome: not while away from the computer (no input for 5 min,
+  // or screen locked), and not while another app is in front. Otherwise a YouTube tab left open overnight drains her to 0.
+  if ((await chrome.idle.queryState(300)) !== "active") return;
+  if (!(await chrome.windows.getLastFocused().catch(() => null))?.focused) return;
   await changeAffection(last.on_task ? AFFECTION.perMinOn : AFFECTION.perMinOff, last.on_task);
 });
 
