@@ -6,19 +6,46 @@ const MODELS = { quick: "gemini-3.1-flash-lite", smart: "gemini-3.8-flash" };
 // true = skip Gemini and fake a verdict from the URL, for testing the pet when the API is down
 const MOCK = true;
 const DISTRACTING = /youtube|reddit|twitter|x\.com|instagram|tiktok|netflix|twitch/;
-function mockVerdict(tab) {
-  return DISTRACTING.test(tab.url)
-    ? { on_task: false, message: "[mock] Off task! Get back to work." }
-    : { on_task: true, message: "[mock] Nice, keep going!" };
+// Canned lines per dere and affection band, so the mock's tone tracks affection like Gemini's does
+const MOCK_LINES = {
+  genki: {
+    low: { on: "Oh! You're back... I missed you. Let's try, okay?", off: "Again?! I really thought you'd stay this time..." },
+    mid: { on: "Yay, back on track! Keep it up!", off: "Hey hey, that's not the task! Come back!" },
+    high: { on: "You're on FIRE today! I'm so proud of you!", off: "Even superstars slip! Back to work, champ!" },
+  },
+  tsundere: {
+    low: { on: "Hmph. Don't think one tab makes up for earlier.", off: "Unbelievable. I KNEW you'd do this, baka." },
+    mid: { on: "Fine. Working, I guess. Not that I care.", off: "Seriously? Close that. N-not for your sake!" },
+    high: { on: "...You're doing well. Don't let it go to your head!", off: "You were doing so well, idiot! Don't ruin it!" },
+  },
+  yandere: {
+    low: { on: "You came back to me... but I'm still counting, darling.", off: "Who is this tab? Why are you looking at it?" },
+    mid: { on: "Good. Stay right here, where I can watch you~", off: "Leaving me for THAT? I saw everything~" },
+    high: { on: "Perfect. Just you, me, and your work. Forever~", off: "I'll forgive you... if you leave right now~" },
+  },
+  kuudere: {
+    low: { on: "Noted. Still disappointed.", off: "As expected." },
+    mid: { on: "Acceptable.", off: "Wrong tab." },
+    high: { on: "...Good work.", off: "You're better than this." },
+  },
+};
+function mockVerdict(tab, dere, affection) {
+  const on_task = !DISTRACTING.test(tab.url);
+  const lines = (MOCK_LINES[dere] || MOCK_LINES.genki)[bandFor(affection)];
+  return { on_task, message: `[mock] ${on_task ? lines.on : lines.off}` };
 }
 
 // Affection: the pet's persistent health (0-100). Lost fast when you slack, won back slowly by focusing.
 // Tune the feel here: deltas per verdict, and per minute spent on the current tab.
 const AFFECTION = { start: 50, onTask: 3, offTask: -15, perMinOn: 2, perMinOff: -3 };
 
+function bandFor(affection) {
+  return affection >= 70 ? "high" : affection >= 40 ? "mid" : "low";
+}
+
 function moodFor(affection, onTask) {
   if (!onTask) return "angry"; // caught slacking: upset right away
-  return affection >= 70 ? "happy" : affection >= 40 ? "neutral" : "sad"; // back on task: only as happy as you've earned
+  return { high: "happy", mid: "neutral", low: "sad" }[bandFor(affection)]; // back on task: only as happy as you've earned
 }
 
 async function changeAffection(delta, onTask) {
@@ -127,13 +154,12 @@ async function judge(tab) {
 
   try {
     // Affection band is in the key so a cached line's tone still matches how upset the pet is
-    const band = affection >= 70 ? "high" : affection >= 40 ? "mid" : "low";
-    const key = `${dere}|${task}|${band}|${tab.url}`;
+    const key = `${dere}|${task}|${bandFor(affection)}|${tab.url}`;
     let verdict = cache.get(key);
     if (!verdict) {
       // Show the pet is thinking right away (text only, the mood stays)
       tell(tab, { type: "say", message: "hmm..." }).catch(() => {});
-      verdict = MOCK ? mockVerdict(tab) : await askGemini(prompt, apiKey, MODELS.quick, VERDICT_SCHEMA);
+      verdict = MOCK ? mockVerdict(tab, dere, affection) : await askGemini(prompt, apiKey, MODELS.quick, VERDICT_SCHEMA);
       cache.set(key, verdict);
     }
     console.log("[moegotchi]", tab.title, verdict);
