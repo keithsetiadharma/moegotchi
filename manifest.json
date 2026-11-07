@@ -2,9 +2,11 @@
   "manifest_version": 3,
   "name": "Moegotchi",
   "version": "0.1",
-  "permissions": ["tabs", "storage", "activeTab"],
+  "description": "A cute little enforcer that keeps you on task.",
+  "permissions": ["tabs", "storage", "scripting", "alarms"],
   "host_permissions": ["<all_urls>", "https://generativelanguage.googleapis.com/*"],
   "background": { "service_worker": "background.js" },
   "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content.js"] }],
+  "web_accessible_resources": [{ "resources": ["sprites/*"], "matches": ["<all_urls>"] }],
   "action": { "default_popup": "popup.html" }
 }

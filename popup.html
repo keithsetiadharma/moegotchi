@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { width: 260px; font-family: system-ui, sans-serif; padding: 12px; }
+    label { display: block; font-size: 12px; margin-top: 8px; font-weight: 600; }
+    input, select, button { width: 100%; box-sizing: border-box; margin-top: 3px; padding: 6px; }
+    h3 { margin: 0 0 4px; }
+    #closed { font-size: 12px; margin-top: 8px; }
+    #recap { font-size: 12px; margin-top: 8px; white-space: pre-wrap; }
+    #recap small { color: #666; }
+  </style>
+</head>
+<body>
+  <h3>Moegotchi</h3>
+  <label>What are you working on?</label>
+  <input id="task" placeholder="finish CMPT assignment" />
+  <label>Choose your dere</label>
+  <select id="dere">
+    <option value="genki">Genki (cheerleader)</option>
+    <option value="tsundere">Tsundere (closes your tabs)</option>
+    <option value="yandere">Yandere (watching you~)</option>
+    <option value="kuudere">Kuudere (deadpan)</option>
+  </select>
+  <label>Gemini API key</label>
+  <input id="apiKey" type="password" placeholder="paste once, stored locally" />
+  <button id="save">Start focusing</button>
+  <button id="end">End session &amp; recap</button>
+  <div id="recap"></div>
+  <div id="closed"></div>
+  <script src="popup.js"></script>
+</body>
+</html>
