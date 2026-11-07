@@ -19,9 +19,12 @@ chrome.storage.onChanged.addListener((c) => c.pet?.newValue && renderPet(c.pet.n
 
 function renderPet({ mood = "neutral", affection = 50 }) {
   $("petSprite").src = `sprites/${mood}.svg`;
-  const lit = Math.round(affection / 10);
-  document.querySelectorAll(".seg").forEach((s, i) => s.classList.toggle("on", i < lit));
-  $("bar").style.setProperty("--seg", affection >= 70 ? "var(--high)" : affection >= 40 ? "var(--pink)" : "var(--low)");
+  // Partial segments, same as the pet widget: each segment is 10 points
+  const color = affection >= 70 ? "var(--high)" : affection >= 40 ? "var(--pink)" : "var(--low)";
+  document.querySelectorAll(".seg").forEach((s, i) => {
+    const px = Math.round((Math.max(0, Math.min(10, affection - i * 10)) / 10) * 8);
+    s.style.background = `linear-gradient(to right, ${color} ${px}px, var(--empty) ${px}px)`;
+  });
   $("affNum").textContent = `${affection}/100`;
   $("petLine").textContent = affection >= 70 ? "Adores you ♥" : affection >= 40 ? "Keeping an eye on you" : "Still upset with you...";
 }
@@ -85,3 +88,11 @@ function renderRecap(r) {
     el.append(chips);
   }
 }
+
+// Users can limit an extension's site access to "On click" in chrome://extensions. Detect it and offer to fix it:
+// without it the pet can't appear on pages (tab judging still works, since titles and URLs come from the tabs permission).
+const ALL_SITES = { origins: ["<all_urls>"] };
+chrome.permissions.contains(ALL_SITES).then((ok) => ($("access").hidden = ok));
+$("grant").onclick = async () => {
+  if (await chrome.permissions.request(ALL_SITES)) $("access").hidden = true;
+};

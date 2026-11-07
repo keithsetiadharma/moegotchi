@@ -43,7 +43,8 @@ function mockVerdict(tab, dere, affection) {
 
 // Affection: the pet's persistent health (0-100). Lost fast when you slack, won back slowly by focusing.
 // Tune the feel here: deltas per verdict, and per minute spent on the current tab.
-const AFFECTION = { start: 50, onTask: 3, offTask: -15, perMinOn: 2, perMinOff: -3 };
+// offTask = getting caught (switching from work to a distraction); offTaskAgain = each further distraction page (every Short, every video)
+const AFFECTION = { start: 50, onTask: 3, offTask: -15, offTaskAgain: -10, perMinOn: 2, perMinOff: -3 };
 
 function bandFor(affection) {
   return affection >= 70 ? "high" : affection >= 40 ? "mid" : "low";
@@ -143,22 +144,26 @@ async function tell(tab, msg) {
 
 // Always off task, whatever the content: Gemini only writes the reaction, no screenshot needed
 const ALWAYS_OFF = ["tiktok.com", "instagram.com", "twitch.tv", "twitter.com", "x.com", "netflix.com"];
-// Always screenshotted: the title alone can't tell a lecture from a MrBeast video.
-// Any other site only gets a screenshot if Gemini says the text wasn't enough (keeps cost and privacy in check).
-const SCREENSHOT_SITES = ["youtube.com"];
+// The ONLY sites that can ever be screenshotted: video sites, where the title can't tell a lecture from a MrBeast video.
+// An allowlist is the privacy guarantee: email, banking, or any site not listed here never leaves the browser as an image.
+const SCREENSHOT_SITES = ["youtube.com", "vimeo.com"];
 
-// Cheap text clues from the page itself: its description, and on YouTube the channel name
-async function pageContext(tab) {
+// Cheap text clues from the page itself: its description, and on YouTube the channel name.
+// deep = also the page's main headings, for a second look when Gemini wasn't sure.
+async function pageContext(tab, deep = false) {
   try {
     const [{ result }] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: () => {
+      args: [deep],
+      func: (deep) => {
         const meta = (n) => document.querySelector(`meta[name="${n}"], meta[property="${n}"]`)?.content || "";
         const channel = document.querySelector("ytd-watch-metadata ytd-channel-name a, ytd-reel-video-renderer[is-active] ytd-channel-name a")?.textContent;
-        return [channel && `channel: ${channel.trim()}`, meta("description") || meta("og:description")].filter(Boolean).join(" | ");
+        const headings = deep && [...document.querySelectorAll("h1, h2")].slice(0, 5).map((h) => h.textContent.trim()).filter(Boolean).join(" / ");
+        return [channel && `channel: ${channel.trim()}`, meta("description") || meta("og:description"), headings && `headings: ${headings}`]
+          .filter(Boolean).join(" | ");
       },
     });
-    return (result || "").slice(0, 300);
+    return (result || "").slice(0, deep ? 600 : 300);
   } catch {
     return ""; // pages we can't script (Web Store etc.): judge on title and URL alone
   }
@@ -215,7 +220,7 @@ async function judge(tab) {
       if (MOCK) verdict = mockVerdict(tab, dere, affection);
       else {
         // Only gathered on a cache miss: no point paying for a screenshot we won't send
-        const context = await pageContext(tab);
+        let context = await pageContext(tab);
         const alwaysOff = onSite(tab.url, ALWAYS_OFF);
         const ask = (image) => {
           const prompt =
@@ -240,10 +245,11 @@ async function judge(tab) {
         else if (onSite(tab.url, SCREENSHOT_SITES)) verdict = await ask(await screenshot(tab));
         else {
           verdict = await ask(null);
-          // Site doesn't fit either category and the text wasn't enough: take a second look with a screenshot
+          // Text wasn't enough: take a second look with more page text (headings). Never a screenshot here,
+          // since this could be any site, including private ones.
           if (verdict.sure === false) {
-            const image = await screenshot(tab);
-            if (image) verdict = await ask(image);
+            context = await pageContext(tab, true);
+            verdict = await ask(null);
           }
         }
       }
@@ -255,10 +261,12 @@ async function judge(tab) {
     const prev = log.at(-1);
     log.push({ t: Date.now(), title: (tab.title || tab.url).slice(0, 60), on_task: verdict.on_task });
     await chrome.storage.local.set({ log: log.slice(-100) });
-    // Only a switch between on and off task changes affection here (getting caught / coming back).
-    // Otherwise scrolling Shorts, a new URL every video, would cost -15 per video. Staying put is handled by the minute tick.
+    // Off task: -15 for getting caught, then -5 for every further distraction page (each Short counts).
+    // On task: +3 only when coming back, so flipping between work tabs can't farm affection; the minute tick rewards staying.
     const switched = !prev || prev.on_task !== verdict.on_task;
-    const delta = !switched ? 0 : verdict.on_task ? AFFECTION.onTask : AFFECTION.offTask;
+    const delta = verdict.on_task
+      ? switched ? AFFECTION.onTask : 0
+      : switched ? AFFECTION.offTask : AFFECTION.offTaskAgain;
     const next = await changeAffection(delta, verdict.on_task);
     await tell(tab, {
       type: "verdict",
@@ -313,12 +321,19 @@ async function recap() {
   return out;
 }
 
+// Judge once a tab has "settled" for 3s (saves quota), but never wait more than 6s in total:
+// otherwise non-stop scrolling through Shorts would keep resetting the timer and never get judged.
+let pendingSince = 0;
 function schedule(tabId) {
   clearTimeout(debounce);
+  pendingSince ||= Date.now();
+  const wait = Math.min(3000, Math.max(0, pendingSince + 6000 - Date.now()));
   debounce = setTimeout(async () => {
+    pendingSince = 0;
+    // Re-read the tab: its URL may have changed since the event (it's whatever you're on now that counts)
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     if (tab && tab.active && tab.url && tab.url.startsWith("http")) judge(tab);
-  }, 3000); // only judge once a tab has "settled" (saves free-tier rate limit)
+  }, wait);
 }
 
 // Every minute of a session, the tab you're sitting on slowly wins back (or loses) affection.

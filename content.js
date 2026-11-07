@@ -26,7 +26,7 @@
   };
 
   // Pixel font, bundled so it works on every site. Registered on the page, usable inside the shadow root.
-  const font = new FontFace("Moe Pixel", `url(${chrome.runtime.getURL("fonts/PixelifySans.ttf")})`);
+  const font = new FontFace("Moe Pixel", `url(${chrome.runtime.getURL("fonts/Jersey10.ttf")})`);
   font.load().then((f) => document.fonts.add(f)).catch(() => {}); // falls back to monospace
 
   // Tiny pixel heart (7x6 grid), reused for the HUD and floating particles
@@ -43,7 +43,7 @@
       :host { --ink:#2b2135; --paper:#fff8ef; --pink:#ff6b9d; --low:#8f7fa8; --high:#ff3d7f; --green:#2fa85f; --red:#e8434f; --empty:#eadff0; }
       * { box-sizing:border-box; }
       .pet { display:flex; flex-direction:column; align-items:flex-end; gap:10px;
-             font:15px/1.25 "Moe Pixel", monospace; color:var(--ink); -webkit-font-smoothing:none; }
+             font:20px/1.1 "Moe Pixel", monospace; color:var(--ink); -webkit-font-smoothing:none; }
       /* Pixel-notched outline: four offset shadows leave the corners empty, plus a hard drop shadow */
       .px { background:var(--paper);
             box-shadow:0 -3px 0 var(--ink), 0 3px 0 var(--ink), -3px 0 0 var(--ink), 3px 0 0 var(--ink), 0 9px 0 rgba(43,33,53,.18); }
@@ -70,15 +70,15 @@
       .fallback { display:none; font-size:22px; line-height:96px; text-align:center; width:100%; }
       .broken .sprite { display:none } .broken .fallback { display:block }
       .min { all:unset; position:absolute; top:4px; right:4px; width:15px; height:15px; cursor:pointer; opacity:0;
-             font:12px/15px "Moe Pixel", monospace; text-align:center; color:var(--ink); background:var(--empty); }
+             font:16px/15px "Moe Pixel", monospace; text-align:center; color:var(--ink); background:var(--empty); }
       .card:hover .min { opacity:1 }
 
       .hud { display:flex; align-items:center; gap:5px; position:relative; }
       .hud svg { width:14px; height:12px; display:block; }
       .bar { display:flex; gap:2px; padding:2px; background:var(--ink); }
-      .seg { width:6px; height:8px; background:var(--empty); }
-      .seg.on { background:var(--seg, var(--pink)); }
-      .delta { position:absolute; right:0; bottom:100%; font-size:15px; white-space:nowrap; opacity:0;
+      .seg { width:5px; height:8px; background:var(--empty); }
+      .num { font-size:16px; min-width:20px; color:#7a6d88; }
+      .delta { position:absolute; right:0; bottom:100%; font-size:20px; white-space:nowrap; opacity:0;
                text-shadow:2px 0 var(--paper), -2px 0 var(--paper), 0 2px var(--paper), 0 -2px var(--paper); }
       .delta.show { animation:rise 1.6s steps(8) forwards; }
 
@@ -88,7 +88,7 @@
 
       /* Minimized: just a small sprite, no bubble (unless a countdown needs you) or HUD */
       .pet.mini .stage { width:48px; height:48px; }
-      .pet.mini .fallback { line-height:48px; font-size:12px; }
+      .pet.mini .fallback { line-height:48px; font-size:16px; }
       .pet.mini .hud, .pet.mini .bubble:not(.urgent) { display:none; }
       .pet.mini .card { padding:4px; }
 
@@ -128,6 +128,7 @@
         <div class="hud" title="Affection">
           ${heart("#ff6b9d")}
           <div class="bar">${'<div class="seg"></div>'.repeat(10)}</div>
+          <span class="num"></span>
           <span class="delta"></span>
         </div>
       </div>
@@ -161,11 +162,14 @@
     replay(stage, "popping");
   }
 
+  // Each of the 10 segments is worth 10 points and fills partially, so 34 shows 3.4 segments, not a rounded 3
   function setAffection(a = 50) {
-    const lit = Math.round(a / 10);
     const color = a >= 70 ? "var(--high)" : a >= 40 ? "var(--pink)" : "var(--low)";
-    segs.forEach((s, i) => s.classList.toggle("on", i < lit));
-    pet.style.setProperty("--seg", color);
+    segs.forEach((s, i) => {
+      const px = Math.round((Math.max(0, Math.min(10, a - i * 10)) / 10) * 5); // whole pixels, segments are 5px wide
+      s.style.background = `linear-gradient(to right, ${color} ${px}px, var(--empty) ${px}px)`;
+    });
+    $(".num").textContent = a;
     hud.title = `Affection ${a}/100`;
   }
 
@@ -269,8 +273,14 @@
       return;
     }
     if (m.type !== "verdict") return;
-    clearCountdown();
     setMood(m.mood);
+    // Still off task with a countdown already running (e.g. scrolling Shorts): keep counting down.
+    // Restarting it on every new verdict would mean the tab never actually closes.
+    if (m.willClose && countdown) {
+      say(m.message || "", { sticky: true });
+      return;
+    }
+    clearCountdown();
     say(m.message || "", { sticky: m.willClose });
 
     if (m.willClose) {
