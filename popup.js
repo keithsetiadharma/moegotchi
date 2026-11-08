@@ -1,12 +1,61 @@
 const $ = (id) => document.getElementById(id);
-const getDere = () => document.querySelector('input[name="dere"]:checked')?.value || "genki";
-const setDere = (d) => (($(`d-${d}`) || $("d-genki")).checked = true);
+// Fallback everywhere = the first persona in personas/index.json (its tile is first)
+const firstDere = () => document.querySelector('input[name="dere"]')?.value;
+const getDere = () => document.querySelector('input[name="dere"]:checked')?.value || firstDere();
+const setDere = (d) => {
+  const tile = $(`d-${d}`) || document.querySelector('input[name="dere"]');
+  if (tile) tile.checked = true;
+};
 
 $("bar").innerHTML = '<div class="seg"></div>'.repeat(10);
 
-chrome.storage.local.get(["task", "dere", "apiKey", "closed", "lastRecap", "pet"]).then((s) => {
+// Personas live in personas/<id>/persona.json, listed in personas/index.json. One that fails to load is skipped.
+async function loadPersonas() {
+  const getJSON = async (path) => (await fetch(chrome.runtime.getURL(path))).json();
+  const ids = await getJSON("personas/index.json");
+  const results = await Promise.allSettled(ids.map((id) => getJSON(`personas/${id}/persona.json`)));
+  const personas = {};
+  results.forEach((r, i) => r.status === "fulfilled" && (personas[ids[i]] = r.value));
+  return personas;
+}
+
+// One radio tile per persona (textContent, not innerHTML: persona files are data, not markup)
+function renderDereTiles() {
+  for (const [id, p] of Object.entries(personas)) {
+    const input = Object.assign(document.createElement("input"), { type: "radio", name: "dere", id: `d-${id}`, value: id });
+    const label = document.createElement("label");
+    label.htmlFor = input.id;
+    const name = document.createElement("b");
+    name.textContent = p.name || id;
+    const tagline = document.createElement("span");
+    tagline.textContent = p.tagline || "";
+    label.append(name, tagline);
+    $("dere").append(input, label);
+  }
+}
+
+// Header sprite: the saved persona's image for the current mood, neutral if that mood has no image
+let personas = {};
+let shownDere = null;
+let shownPet = {};
+function personaImage(id, mood) {
+  const pid = personas[id] ? id : firstDere();
+  const images = personas[pid]?.images || {};
+  const file = images[mood] || images.neutral;
+  return file ? chrome.runtime.getURL(`personas/${pid}/${file}`) : "";
+}
+$("petSprite").onerror = function () {
+  const neutral = personaImage(shownDere, "neutral");
+  if (neutral && this.src !== neutral) this.src = neutral;
+};
+
+(async () => {
+  personas = await loadPersonas();
+  renderDereTiles();
+  const s = await chrome.storage.local.get(["task", "dere", "apiKey", "closed", "lastRecap", "pet"]);
   $("task").value = s.task || "";
-  setDere(s.dere || "genki");
+  shownDere = s.dere || firstDere();
+  setDere(shownDere);
   $("apiKey").value = s.apiKey || "";
   // Key already saved: tuck the field away; no key yet: show it open so it's not missed
   $("keyBox").open = !s.apiKey;
@@ -14,11 +63,17 @@ chrome.storage.local.get(["task", "dere", "apiKey", "closed", "lastRecap", "pet"
   renderPet(s.pet || {});
   renderClosed(s.closed || []);
   if (s.lastRecap) renderRecap(s.lastRecap);
+})();
+chrome.storage.onChanged.addListener((c) => {
+  if (c.dere) shownDere = c.dere.newValue || firstDere();
+  if (c.pet?.newValue || c.dere) renderPet(c.pet?.newValue || shownPet);
 });
-chrome.storage.onChanged.addListener((c) => c.pet?.newValue && renderPet(c.pet.newValue));
 
-function renderPet({ mood = "neutral", affection = 50 }) {
-  $("petSprite").src = `sprites/${mood}.svg`;
+function renderPet(pet) {
+  shownPet = pet;
+  const { mood = "neutral", affection = 50 } = pet;
+  $("petSprite").src = personaImage(shownDere, mood);
+  $("petSprite").classList.toggle("smooth", personas[shownDere]?.pixelArt === false);
   // Partial segments, same as the pet widget: each segment is 10 points
   const color = affection >= 70 ? "var(--high)" : affection >= 40 ? "var(--pink)" : "var(--low)";
   document.querySelectorAll(".seg").forEach((s, i) => {

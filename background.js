@@ -12,32 +12,11 @@ function onSite(url, domains) {
   return domains.some((d) => host === d || host.endsWith("." + d));
 }
 const DISTRACTING = ["youtube.com", "reddit.com", "twitter.com", "x.com", "instagram.com", "tiktok.com", "netflix.com", "twitch.tv"];
-// Canned lines per dere and affection band, so the mock's tone tracks affection like Gemini's does
-const MOCK_LINES = {
-  genki: {
-    low: { on: "Oh! You're back... I missed you. Let's try, okay?", off: "Again?! I really thought you'd stay this time..." },
-    mid: { on: "Yay, back on track! Keep it up!", off: "Hey hey, that's not the task! Come back!" },
-    high: { on: "You're on FIRE today! I'm so proud of you!", off: "Even superstars slip! Back to work, champ!" },
-  },
-  tsundere: {
-    low: { on: "Hmph. Don't think one tab makes up for earlier.", off: "Unbelievable. I KNEW you'd do this, baka." },
-    mid: { on: "Fine. Working, I guess. Not that I care.", off: "Seriously? Close that. N-not for your sake!" },
-    high: { on: "...You're doing well. Don't let it go to your head!", off: "You were doing so well, idiot! Don't ruin it!" },
-  },
-  yandere: {
-    low: { on: "You came back to me... but I'm still counting, darling.", off: "Who is this tab? Why are you looking at it?" },
-    mid: { on: "Good. Stay right here, where I can watch you~", off: "Leaving me for THAT? I saw everything~" },
-    high: { on: "Perfect. Just you, me, and your work. Forever~", off: "I'll forgive you... if you leave right now~" },
-  },
-  kuudere: {
-    low: { on: "Noted. Still disappointed.", off: "As expected." },
-    mid: { on: "Acceptable.", off: "Wrong tab." },
-    high: { on: "...Good work.", off: "You're better than this." },
-  },
-};
-function mockVerdict(tab, dere, affection) {
+// Mock lines come from the persona's mockLines (per affection band), so the mock's tone tracks affection like Gemini's does.
+// A persona without mockLines gets generic ones instead of crashing mock mode.
+function mockVerdict(tab, persona, affection) {
   const on_task = !onSite(tab.url, DISTRACTING);
-  const lines = (MOCK_LINES[dere] || MOCK_LINES.genki)[bandFor(affection)];
+  const lines = persona.mockLines?.[bandFor(affection)] || { on: "Nice, back to work!", off: "Hey, that's off task." };
   return { on_task, messages: [`[mock] ${on_task ? lines.on : lines.off}`] };
 }
 
@@ -71,24 +50,29 @@ function changeAffection(delta, onTask) {
   return run;
 }
 
-const DERE = {
-  genki: {
-    persona: "You are an upbeat, rewarding cheerleader pet. Celebrate focus, gently redirect distraction. Short, cute, max 15 words.",
-    closes: false,
-  },
-  tsundere: {
-    persona: "You are a tsundere pet. Harsh and insulting on the surface, secretly caring. Max 15 words.",
-    closes: true,
-  },
-  yandere: {
-    persona: "You are a playfully yandere pet, way too attached, always watching the user's tabs. Keep it funny, never threatening. Max 15 words.",
-    closes: false,
-  },
-  kuudere: {
-    persona: "You are a cool, deadpan, quietly disappointed pet. Minimal words, max 10 words.",
-    closes: false,
-  },
-};
+// Personas live in personas/<id>/persona.json, listed in personas/index.json. Loaded once each time the
+// service worker starts. A persona that fails to load is skipped (logged) instead of breaking the others.
+async function loadPersonas() {
+  const getJSON = async (path) => (await fetch(chrome.runtime.getURL(path))).json();
+  const ids = await getJSON("personas/index.json");
+  const results = await Promise.allSettled(ids.map((id) => getJSON(`personas/${id}/persona.json`)));
+  const personas = {};
+  results.forEach((r, i) => {
+    if (r.status === "fulfilled") personas[ids[i]] = r.value;
+    else console.error(`[moegotchi] couldn't load persona "${ids[i]}"`, r.reason);
+  });
+  return personas;
+}
+const personasReady = loadPersonas();
+
+// The persona's personality prompt: "voice" (current format), or "prompt" (older persona files)
+const voiceOf = (p) => p.voice ?? p.prompt;
+
+// Unknown or missing id falls back to the first persona in personas/index.json that loaded
+async function getPersona(id) {
+  const all = await personasReady;
+  return all[id] || Object.values(all)[0];
+}
 
 let debounce = null;
 
@@ -212,12 +196,12 @@ function pickLine(lines = []) {
 const cache = new Map();
 
 async function judge(tab) {
-  const { apiKey, task, dere = "genki", pet = {} } = await chrome.storage.local.get(["apiKey", "task", "dere", "pet"]);
+  const { apiKey, task, dere, pet = {} } = await chrome.storage.local.get(["apiKey", "task", "dere", "pet"]);
   if (!task || (!apiKey && !MOCK)) {
     console.log("[moegotchi] skipped: set a task and API key in the popup");
     return;
   }
-  const d = DERE[dere] || DERE.genki;
+  const d = await getPersona(dere);
   const affection = pet.affection ?? AFFECTION.start;
 
   try {
@@ -229,14 +213,14 @@ async function judge(tab) {
     if (!verdict) {
       // Show the pet is thinking right away (text only, the mood stays)
       tell(tab, { type: "say", message: "hmm...", thinking: true }).catch(() => {});
-      if (MOCK) verdict = mockVerdict(tab, dere, affection);
+      if (MOCK) verdict = mockVerdict(tab, d, affection);
       else {
         // Only gathered on a cache miss: no point paying for a screenshot we won't send
         let context = await pageContext(tab);
         const alwaysOff = onSite(tab.url, ALWAYS_OFF);
         const ask = (image) => {
           const prompt =
-            `${d.persona}\n` +
+            `${voiceOf(d)}\n` +
             `Your affection for the user: ${affection}/100. Below 40 you're still upset with them and they must win you back, ` +
             `even while they're on task; above 70 you adore them. Let it show in your tone.\n` +
             `The user's current task: "${task}"\n` +
@@ -295,7 +279,8 @@ async function judge(tab) {
       message: pickLine(verdict.messages),
       mood: next.mood,
       // Only close tabs when Gemini is sure it's a distraction: closing a tab you needed is the costliest mistake
-      willClose: d.closes && !verdict.on_task && verdict.sure !== false,
+      willClose: d.closesTabs && !verdict.on_task && verdict.sure !== false,
+      countdownSec: d.countdownSec || 10, // how long before the tab closes (persona.json, default 10)
     });
   } catch (e) {
     console.error("[moegotchi] judge failed", e);
@@ -306,7 +291,7 @@ async function judge(tab) {
 
 // End-of-session recap, written by the smart model from the session log
 async function recap() {
-  const { apiKey, task, dere = "genki", log = [], totals = { onMs: 0, offMs: 0 }, sessionStart, pet = {} } =
+  const { apiKey, task, dere, log = [], totals = { onMs: 0, offMs: 0 }, sessionStart, pet = {} } =
     await chrome.storage.local.get(["apiKey", "task", "dere", "log", "totals", "sessionStart", "pet"]);
   if (!log.length) return { recap: "Nothing to recap yet. Click Start focusing, then switch some tabs!" };
 
@@ -328,7 +313,7 @@ async function recap() {
     const time = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const timeline = log.map((e) => `${time(e.t)} ${e.on_task ? "ON " : "OFF"} ${e.title}`).join("\n");
     const prompt =
-      `${DERE[dere]?.persona || DERE.genki.persona}\n` +
+      `${voiceOf(await getPersona(dere))}\n` +
       `Stay in character, but ignore the word limit: write a 3-4 sentence end-of-session recap.\n` +
       `The user's task: "${task}"\nStats: ${stats}\nTab timeline:\n${timeline}\n` +
       `Praise what went well, call out the biggest distraction by name, and give one tip for next session.`;

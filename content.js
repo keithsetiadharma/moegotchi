@@ -3,27 +3,28 @@
   if (window.__moegotchi) return;
   window.__moegotchi = true;
 
-  // Mood sprites live in sprites/ (listed in web_accessible_resources). Swap the files or extension freely.
-  const SPRITES = {
-    happy: "sprites/happy.svg",
-    neutral: "sprites/neutral.svg",
-    sad: "sprites/sad.svg",
-    angry: "sprites/angry.svg",
-  };
-  // Text fallback if a sprite fails to load
+  const MOODS = ["happy", "neutral", "sad", "angry"];
+  // Text fallback if no sprite can load at all
   const FACES = { happy: "(◕‿◕)", neutral: "(•‿•)", sad: "(╥﹏╥)", angry: "(╬ಠ益ಠ)" };
-  const URLS = {};
-  for (const [mood, path] of Object.entries(SPRITES)) {
-    URLS[mood] = chrome.runtime.getURL(path);
-    new Image().src = URLS[mood]; // preload so mood swaps don't flicker
+
+  // The selected persona (personas/<id>/persona.json): its mood images, and what it says when you pet it.
+  // Petting is purely cosmetic: it doesn't change affection, or it'd be farmable.
+  let persona = null;
+  let URLS = {}; // mood -> image URL; a mood with no image uses the neutral one
+  async function loadPersona(id) {
+    const getJSON = async (path) => (await fetch(chrome.runtime.getURL(path))).json();
+    const fetchPersona = (pid) => getJSON(`personas/${pid}/persona.json`).then((p) => [pid, p]);
+    // No, unknown or broken id: fall back to the first persona in personas/index.json
+    const [pid, p] = await (id ? fetchPersona(id) : Promise.reject())
+      .catch(async () => fetchPersona((await getJSON("personas/index.json"))[0]));
+    persona = p;
+    // "pixelArt": false in persona.json = smooth illustration; crisp pixel scaling would make it jagged
+    stage.classList.toggle("smooth", p.pixelArt === false);
+    const img = (file) => file && chrome.runtime.getURL(`personas/${pid}/${file}`);
+    URLS = Object.fromEntries(MOODS.map((m) => [m, img(p.images?.[m]) || img(p.images?.neutral)]));
+    Object.values(URLS).forEach((u) => u && (new Image().src = u)); // preload so mood swaps don't flicker
+    showSprite();
   }
-  // What the pet says when you click (pet) it. Purely cosmetic: petting doesn't change affection, or it'd be farmable.
-  const PET_LINES = {
-    genki: ["Ehehe~! ♥", "Again, again!", "You're the best!"],
-    tsundere: ["D-don't touch me!", "...Fine. Once more.", "Hmph! Baka!"],
-    yandere: ["Only you can do that~", "Never stop~", "Mine~ ♥"],
-    kuudere: ["...", "Acceptable.", "...Again."],
-  };
 
   // Pixel font, bundled so it works on every site. Registered on the page, usable inside the shadow root.
   const font = new FontFace("Moe Pixel", `url(${chrome.runtime.getURL("fonts/Jersey10.ttf")})`);
@@ -66,7 +67,9 @@
       .card { position:relative; padding:8px 8px 10px; display:flex; flex-direction:column; align-items:center; gap:6px; }
       .stage { position:relative; width:96px; height:96px; cursor:grab; touch-action:none; user-select:none; }
       .stage:active { cursor:grabbing; }
-      .sprite { width:100%; height:100%; image-rendering:pixelated; pointer-events:none; display:block; }
+      /* contain: non-square art keeps its proportions instead of being stretched to the square stage */
+      .sprite { width:100%; height:100%; object-fit:contain; image-rendering:pixelated; pointer-events:none; display:block; }
+      .smooth .sprite { image-rendering:auto; }
       .fallback { display:none; font-size:22px; line-height:96px; text-align:center; width:100%; }
       .broken .sprite { display:none } .broken .fallback { display:block }
       .min { all:unset; position:absolute; top:4px; right:4px; width:15px; height:15px; cursor:pointer; opacity:0;
@@ -142,7 +145,11 @@
   const segs = [...root.querySelectorAll(".seg")];
 
   sprite.onload = () => stage.classList.remove("broken");
-  sprite.onerror = () => stage.classList.add("broken");
+  // A mood image that's missing or fails to load falls back to neutral, then to the text face
+  sprite.onerror = () => {
+    if (URLS.neutral && sprite.src !== URLS.neutral) sprite.src = URLS.neutral;
+    else stage.classList.add("broken");
+  };
 
   // Restart a CSS animation by toggling its class (the reflow in between makes the browser replay it)
   function replay(el, cls) {
@@ -153,13 +160,18 @@
 
   let mood = null;
   function setMood(m) {
-    const next = SPRITES[m] ? m : "neutral";
+    const next = MOODS.includes(m) ? m : "neutral";
     if (next === mood) return;
     mood = next;
     pet.dataset.mood = mood;
     fallback.textContent = FACES[mood];
-    sprite.src = URLS[mood];
+    showSprite();
     replay(stage, "popping");
+  }
+  function showSprite() {
+    if (!mood || !URLS[mood]) return; // persona or mood not known yet; called again once both are
+    stage.classList.remove("broken");
+    sprite.src = URLS[mood];
   }
 
   // Each of the 10 segments is worth 10 points and fills partially, so 34 shows 3.4 segments, not a rounded 3
@@ -207,7 +219,8 @@
   }
 
   // --- Shared state across tabs: mood, affection, minimized, position ---
-  chrome.storage.local.get(["pet", "petMin", "petPos"]).then(({ pet: p, petMin, petPos }) => {
+  chrome.storage.local.get(["pet", "petMin", "petPos", "dere"]).then(({ pet: p, petMin, petPos, dere }) => {
+    loadPersona(dere);
     setMood(p?.mood);
     setAffection(p?.affection);
     pet.classList.toggle("mini", !!petMin);
@@ -225,6 +238,7 @@
       showDelta(p.affection - (changes.pet.oldValue?.affection ?? p.affection));
     }
     if (changes.petMin) pet.classList.toggle("mini", !!changes.petMin.newValue);
+    if (changes.dere) loadPersona(changes.dere.newValue); // picked a different persona in the popup
   });
 
   $(".min").onclick = () => chrome.storage.local.set({ petMin: !pet.classList.contains("mini") });
@@ -254,8 +268,7 @@
       return;
     }
     // Petting
-    const { dere = "genki" } = await chrome.storage.local.get("dere");
-    const lines = PET_LINES[dere] || PET_LINES.genki;
+    const lines = persona?.petLines?.length ? persona.petLines : ["♥"];
     replay(stage, "petted");
     setTimeout(() => stage.classList.remove("petted"), 500); // hand the sprite back to its mood animation
     particles("up", 2);
@@ -302,7 +315,7 @@
     say(m.message || "", { sticky: m.willClose });
 
     if (m.willClose) {
-      let n = 10;
+      let n = m.countdownSec || 10;
       bubble.classList.add("urgent"); // stays visible even when minimized
       count.hidden = keep.hidden = false;
       count.textContent = `Closing this tab in ${n}...`;

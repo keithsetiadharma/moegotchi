@@ -14,7 +14,8 @@
     .card { padding: 10px; margin: 3px 3px 16px; }
 
     header { display: flex; gap: 10px; align-items: center; }
-    header img { width: 64px; height: 64px; image-rendering: pixelated; animation: bob 1.6s steps(2) infinite; }
+    header img { width: 64px; height: 64px; object-fit: contain; image-rendering: pixelated; animation: bob 1.6s steps(2) infinite; }
+    header img.smooth { image-rendering: auto; }
     h1 { margin: 0; font-size: 30px; font-weight: 400; letter-spacing: 1px; }
     .sub { color: var(--muted); font-size: 17px; }
     .hud { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
@@ -65,7 +66,7 @@
 </head>
 <body>
   <header class="card px">
-    <img id="petSprite" src="sprites/neutral.svg" alt="" />
+    <img id="petSprite" alt="" />
     <div>
       <h1>Moegotchi</h1>
       <div class="sub" id="petLine">Your focus buddy</div>
@@ -89,12 +90,8 @@
     </div>
     <div class="field">
       <span class="label">Choose your dere</span>
-      <div class="deres" id="dere">
-        <input type="radio" name="dere" id="d-genki" value="genki" /><label for="d-genki"><b>Genki</b><span>cheerleader</span></label>
-        <input type="radio" name="dere" id="d-tsundere" value="tsundere" /><label for="d-tsundere"><b>Tsundere</b><span>closes your tabs</span></label>
-        <input type="radio" name="dere" id="d-yandere" value="yandere" /><label for="d-yandere"><b>Yandere</b><span>watching you~</span></label>
-        <input type="radio" name="dere" id="d-kuudere" value="kuudere" /><label for="d-kuudere"><b>Kuudere</b><span>deadpan</span></label>
-      </div>
+      <!-- One tile per persona in personas/index.json, built by popup.js -->
+      <div class="deres" id="dere"></div>
     </div>
     <details id="keyBox">
       <summary id="keyLabel">Gemini API key</summary>
