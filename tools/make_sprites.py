@@ -1,7 +1,7 @@
 # Generates 32x32 pixel-art mood sprites (happy, neutral, sad, angry) as crisp SVGs.
 # Run: python3 tools/make_sprites.py <character> <persona folder>
 #   e.g. python3 tools/make_sprites.py cat personas/tsun
-# Characters: cat, zippy, sarge, pebble, meh
+# Characters: cat, zippy, sarge, pebble, meh, and otters: stormy, sparky, trendy, spendy
 import sys
 
 N = 32
@@ -190,6 +190,58 @@ def meh():
     }
     return base, faces
 
+# ---------- otters (SURGE mascot placeholders): one design, four colors, one small accessory each ----------
+OTTER_COLORS = {  # body, shade, light muzzle, inner ear
+    "stormy": ("#6fb7f2", "#4a8fd0", "#d6ecfd", "#3d78b3"),
+    "sparky": ("#ffd54f", "#f0b429", "#fff3c4", "#d99a1c"),
+    "trendy": ("#f7a6c8", "#e07aa8", "#fde3ef", "#c95d8f"),
+    "spendy": ("#8fd18f", "#5fae66", "#e2f5df", "#4a8f52"),
+}
+OTTER_ACCESSORY = {  # (x, y, rows), drawn top-left so it never covers the face
+    "stormy": (1, 2, [".QQQ.", "QQQQQ", ".QQQ.", "T.T.T"]),        # rain cloud
+    "sparky": (2, 1, ["..YY", ".YY.", "YYYY", "..YY", ".YY.", ".Y.."]),  # lightning bolt
+    "trendy": (3, 4, ["MM.MM", "MMMMM", "MM.MM"]),                # bow
+    "spendy": (2, 2, [".YYY.", "YYOYY", "YYOYY", ".YYY."]),       # coin
+}
+def otter(name):
+    def make():
+        b, sh, lt, ear = OTTER_COLORS[name]
+        PAL.update({"B": b, "S": sh, "L": lt, "I": ear})
+        cy = 18.5
+        head = lambda x, y: in_ellipse(x, y, cx, cy, 12, 10.5)
+        earL = lambda x, y: in_ellipse(x, y, 7, 9.5, 3.4, 3.4)
+        earR = lambda x, y: in_ellipse(x, y, 24, 9.5, 3.4, 3.4)
+        muzzle = lambda x, y: in_ellipse(x, y, cx, 23, 6.5, 4.2)
+        shape = lambda x, y: head(x, y) or earL(x, y) or earR(x, y)
+        def fill(x, y):
+            if not head(x, y): return "I" if in_ellipse(x, y, 7, 9.5, 1.8, 1.8) or in_ellipse(x, y, 24, 9.5, 1.8, 1.8) else "B"
+            if muzzle(x, y): return "L"
+            if not in_ellipse(x, y, cx - 1.5, cy - 1.5, 11.5, 10.5): return "S"
+            return "B"
+        def base():
+            g = body(shape, fill)
+            shine(g, ((9, 12), (10, 12), (9, 13)))
+            stamp(g, 14, 20, ["EEEE", ".EE."])  # the wide otter nose
+            for x, y in ((11, 22), (10, 24), (20, 22), (21, 24)): g[y][x] = "E"  # whisker dots: otter, not bear
+            ax, ay, rows = OTTER_ACCESSORY[name]
+            stamp(g, ax, ay, rows)
+            return g
+        faces = {
+            "neutral": lambda g: (stamp(g, 10, 15, EYE), stamp(g, 20, 15, mirror_rows(EYE)),
+                                  stamp(g, 13, 23, ["E.EE.E", ".E..E."]), stamp(g, 6, 19, ["PP"]), stamp(g, 24, 19, ["PP"])),
+            "happy": lambda g: (stamp(g, 8, 15, [".EEE.", "E...E"]), stamp(g, 19, 15, [".EEE.", "E...E"]),
+                                stamp(g, 13, 23, ["EEEEEE", "EMMMME", ".EEEE."]), stamp(g, 5, 19, ["PPP"]), stamp(g, 24, 19, ["PPP"]),
+                                stamp(g, 27, 2, SPARK), stamp(g, 28, 25, SPARK)),
+            "sad": lambda g: (stamp(g, 9, 13, ["..EE", "EE.."]), stamp(g, 19, 13, ["EE..", "..EE"]),
+                              stamp(g, 10, 15, EYE), stamp(g, 20, 15, mirror_rows(EYE)),
+                              stamp(g, 10, 18, ["T", "T"]), stamp(g, 21, 18, ["T", "T"]), stamp(g, 13, 24, ["..EE..", ".E..E."])),
+            "angry": lambda g: (stamp(g, 8, 13, ["EE..", "..EE"]), stamp(g, 20, 13, ["..EE", "EE.."]),
+                                stamp(g, 10, 15, ["EE", "EE"]), stamp(g, 20, 15, ["EE", "EE"]),
+                                stamp(g, 13, 23, ["EEEEEE", "EWWWWE", "EEEEEE"]), stamp(g, 26, 2, ANGER)),
+        }
+        return base, faces
+    return make
+
 def svg(g):
     rects = []
     for y, row in enumerate(g):
@@ -206,7 +258,8 @@ def svg(g):
 
 if __name__ == "__main__":
     character, out = sys.argv[1], sys.argv[2]
-    base, faces = {"cat": cat, "zippy": zippy, "sarge": sarge, "pebble": pebble, "meh": meh}[character]()
+    characters = {"cat": cat, "zippy": zippy, "sarge": sarge, "pebble": pebble, "meh": meh, **{o: otter(o) for o in OTTER_COLORS}}
+    base, faces = characters[character]()
     for mood, face in faces.items():
         g = base(); face(g)
         open(f"{out}/{mood}.svg", "w").write(svg(g))

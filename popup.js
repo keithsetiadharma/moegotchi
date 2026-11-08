@@ -85,7 +85,10 @@ function renderPet(pet) {
     s.style.background = `linear-gradient(to right, ${color} ${px}px, var(--empty) ${px}px)`;
   });
   $("affNum").textContent = `${affection}/100`;
-  $("petLine").textContent = affection >= 70 ? "Adores you ♥" : affection >= 40 ? "Keeping an eye on you" : "Still upset with you...";
+  // Which sidekick is active (the saved one), plus how they feel about you
+  const name = personas[shownDere]?.name || personas[firstDere()]?.name || "Your sidekick";
+  $("petLine").textContent =
+    affection >= 70 ? `${name} adores you ♥` : affection >= 40 ? `${name} is keeping an eye on you` : `${name} is still upset with you...`;
 }
 
 $("save").onclick = async () => {
@@ -117,6 +120,9 @@ function renderClosed(closed) {
     el.append(a);
   });
 }
+
+// Reset affection to the starting 50 with a neutral mood. Every open tab's pet updates via the storage change.
+$("resetAff").onclick = () => chrome.storage.local.set({ pet: { affection: 50, mood: "neutral" } });
 
 $("end").onclick = async () => {
   $("end").textContent = "Writing your recap...";

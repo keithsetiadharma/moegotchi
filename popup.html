@@ -23,6 +23,9 @@
     .bar { display: flex; gap: 2px; padding: 2px; background: var(--ink); }
     .seg { width: 8px; height: 9px; background: var(--empty); }
     .num { font-size: 17px; color: var(--muted); }
+    /* Small text button, overriding the big pink button style */
+    button.reset { all: unset; cursor: pointer; font-size: 15px; color: var(--muted); margin-left: 2px; }
+    button.reset:hover { color: var(--pink); }
 
     label, .label { display: block; font-size: 17px; color: var(--muted); margin: 0 0 4px; }
     input { width: 100%; padding: 7px 8px; border: 0; outline: 0; font: inherit; color: var(--ink); background: #fff;
@@ -78,6 +81,7 @@
       <div class="hud" title="Affection">
         <div class="bar" id="bar"></div>
         <span class="num" id="affNum"></span>
+        <button class="reset" id="resetAff" title="Reset affection to 50 (handy before a demo)">↺ reset</button>
       </div>
     </div>
   </header>
@@ -94,7 +98,7 @@
       <input id="task" placeholder="finish CMPT assignment" />
     </div>
     <div class="field">
-      <span class="label">Choose your dere</span>
+      <span class="label">Choose your sidekick</span>
       <!-- One tile per persona in personas/index.json, built by popup.js -->
       <div class="deres" id="dere"></div>
       <div id="dereInfo"></div>

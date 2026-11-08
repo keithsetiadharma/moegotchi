@@ -1,45 +1,82 @@
 # Moegotchi
 
-**A digital sidekick that lives in your browser and kicks you back to work.**
+### Blockers block sites. Moegotchi understands them.
+
+A Chrome extension where a pixel-art sidekick watches what you're actually doing, uses Gemini to judge whether it helps your task, and reacts in a personality *you* picked: cheering you on, roasting you, or quietly closing the tab that's eating your night.
 
 Built for **Fall Hacks 26** (theme: *Digital Side-kick*) by Keith Setiadharma.
 
-<!-- TODO: add a screenshot or GIF here, then uncomment the line below. A 10s GIF of the pet reacting to a lecture tab vs a distraction tab is the best thing you can put in this README.
-![Moegotchi demo](docs/demo.gif)
--->
+<!-- TODO: add a 10-15s GIF: set a task, open a lecture (happy), open an unrelated video on the SAME site (angry), tab closes after the countdown. Then uncomment the next line. -->
+<!-- ![Moegotchi demo](docs/demo.gif) -->
 
-## What it is
+---
 
-Everyone gets distracted. Website blockers don't help much: they block YouTube even when you're watching a lecture, and they're easy to ignore.
+## The problem with focus tools
 
-Moegotchi is a Chrome extension with a pixel-art sidekick that understands *what you're actually doing*. You tell it your task, pick a personality, and it watches your tabs. Gemini decides whether the page helps with your task, and your sidekick reacts in character: it cheers when you're locked in, and it gets sad, annoyed, or gets rid of the tab when you drift.
+Every focus tool is a blocklist. That makes them dumb in two ways:
 
-Different people respond to different kinds of motivation, so you choose the kind of push that works on you.
+- They block YouTube even when you're watching a lecture for your class.
+- They don't care that *you* are the problem: some people need a cheerleader, some need a drill sergeant, and a grey "this site is blocked" page motivates nobody.
 
-## Features
+## What Moegotchi does differently
 
-- **Context-aware judging.** A lecture on your topic and an unrelated video on the same site get different verdicts.
-- **Ten sidekicks,** each with its own voice, all generated live by Gemini (not scripted lines):
-  - **Campus mascots:** Jepi, a helpful little Raspberry Pi (CSSS), and the SURGE otters Stormy, Sparky, Trendy and Spendy
-  - **Tsun,** an aloof cat who pretends not to care, and closes distracting tabs after a countdown
-  - **Sarge,** a tough-but-fair drill sergeant who closes tabs even faster
-  - **Zippy,** pure hype; **Pebble,** calm and gentle for people stressed by pushy pets; **Meh,** deadpan and quietly disappointed
-- **Affection system.** Your sidekick's mood and tone change with how you've been behaving. Getting caught costs affection, every further distraction (each Short, each video) costs more, and coming back to work earns it back. Time only counts while you're actually at Chrome: it pauses when you're idle, locked, or in another app. Lines are written for the *current* affection level.
-- **Fair warnings.** Strict sidekicks show a countdown with an "I need this tab!" button before closing anything. That spares the one video you needed, not the whole tab. Closed tabs can be restored in one click from the popup.
-- **Benefit of the doubt.** A blank Google Doc or an unclear page counts as work. Your sidekick would rather miss a slack-off than scold you mid-essay, and only closes a tab when Gemini is sure it's a distraction.
-- **Evidence escalation.** For unclear pages, it gathers more context instead of guessing (see below).
-- **End-of-session recap.** Press "End session" and Gemini writes an in-character summary from stats computed in code.
-- **Pixel-art UI.** Animated sprites and speech bubbles that live in a shadow DOM, so they don't clash with the page's styles.
+| | Typical blocker | Moegotchi |
+| --- | --- | --- |
+| Decides by | A list of sites | What the page is actually about, relative to **your task** |
+| Same site, different page | Same verdict | Lecture = on task, unrelated video = off task |
+| Tone | One cold message | **10 sidekicks**, each with its own voice, written live by Gemini |
+| When unsure | Blocks anyway | **Benefit of the doubt.** Never scolds you on a blank doc or unclear page |
+| After a slip | Nothing | Affection changes, tone shifts, and getting back on track earns it back |
+| End of day | Nothing | In-character recap of how your session really went |
+
+## Try it in 60 seconds
+
+1. Set your task to something like *"study binary search trees"* and pick a sidekick.
+2. Open a Wikipedia page on the topic. Your sidekick is happy.
+3. Open an unrelated video **on YouTube**. Same site, different verdict. Your sidekick calls you out.
+4. Keep scrolling. With a strict sidekick (Tsun or Sarge), a countdown starts, with an "I need this tab!" button as your escape hatch.
+5. Press **End session** for a recap written in your sidekick's voice.
+
+---
 
 ## How Gemini is used
 
-Gemini is the core of the product, not an add-on.
+Gemini is the product, not a feature bolted onto it. Take it out and there is nothing left but a cat sprite.
 
-1. **Cheapest evidence first.** The extension checks a cache first. On a miss it sends the tab title, URL and the page's short description (plus the channel name on YouTube). On YouTube and Vimeo, where a title can't tell a lecture from entertainment, it also sends a small **screenshot** (multimodal input). On any other site, if Gemini says it isn't sure, it takes a second look with the page's headings. This keeps most calls fast and cheap.
-2. **Structured output.** Gemini returns JSON (`on_task`, a confidence value, and four lines written for the current affection level), so the UI can use the response directly with no text parsing.
-3. **Personality from the model.** Each sidekick is a different system prompt, kept in its own `personas/<id>/persona.json`. The same distraction gets a different reaction depending on whom you picked, and on how the session has gone so far.
-4. **Two models for two jobs.** A fast Flash-Lite model handles the frequent on/off-task judgments, and a stronger Flash model writes the end-of-session recap.
-5. **Game logic stays in code.** Affection and stats are computed deterministically, and Gemini only writes the words. That keeps the behavior predictable.
+| Gemini capability | What it does here |
+| --- | --- |
+| **Multimodal input** | On YouTube and Vimeo, where a title can't tell a lecture from entertainment, it sends a small screenshot of the page |
+| **Structured output** | Returns JSON (`on_task`, a confidence value, and four lines written for the current mood), so the UI uses the reply directly |
+| **Persona via system prompt** | Each sidekick is its own `persona.json` voice prompt. The same distraction produces a different reaction per sidekick, and per affection level |
+| **Model routing** | A fast Flash-Lite model does the frequent judgments, and a stronger Flash model writes the end-of-session recap |
+| **Escalating evidence** | Cheapest context first: cache, then title/URL/description, then a screenshot (YouTube/Vimeo), then page headings for a second look if the model says it isn't sure |
+
+Gemini writes the words. **The game logic is plain code.** Affection, stats, and countdowns are computed deterministically, so behavior stays predictable and a flaky response can't break the experience.
+
+## Design choices we're proud of
+
+- **It would rather miss a slip than scold you wrongly.** An unclear page counts as work, and a tab only closes when the model is *sure* it's a distraction. False alarms are what make people uninstall focus tools.
+- **Fair, not tyrannical.** Strict sidekicks always give a countdown first, and "I need this tab!" spares just that one video. Closed tabs restore in one click.
+- **Every extra distraction costs more.** Each Short or video drains affection, so doomscrolling is felt in the character and not only in a timer. Time only counts while you're actually in Chrome, so it pauses when you're idle, locked, or in another app.
+- **Cost-aware by design.** A cache and an escalation ladder keep most checks cheap, so it works on a free API key (we built it against a 20-requests-a-day free tier, which forced the design).
+- **Personas are data, not code.** Adding a sidekick is a folder, with no code changes (see below).
+
+## The sidekicks
+
+Ten, each with its own voice and strictness:
+
+- **Campus mascots:** Jepi, a helpful little Raspberry Pi (CSSS), and the SURGE otters Stormy, Sparky, Trendy and Spendy, used with the organizers' permission
+- **Tsun,** an aloof cat who pretends not to care, and closes distracting tabs after a countdown
+- **Sarge,** a tough-but-fair drill sergeant who closes tabs fast
+- **Zippy,** pure hype
+- **Pebble,** calm and gentle, for people stressed by pushy pets
+- **Meh,** deadpan and quietly disappointed
+
+### Adding a sidekick
+
+No code changes. Create `personas/<id>/` with a `persona.json` and mood images (`happy`, `neutral`, `sad`, `angry`; only `neutral` is required and missing moods fall back to it), add the id to `personas/index.json`, and reload the extension. Copy an existing `persona.json` as a template.
+
+---
 
 ## Install and run
 
@@ -57,7 +94,7 @@ The API key is stored locally in `chrome.storage.local`. It is never written int
 
 ### Mock mode (for development)
 
-The free Gemini tier has a small daily request limit. To work on the UI without spending quota, set `MOCK = true` in `background.js`. In mock mode no API calls are made and verdicts come from simple rules. Set it back to `false` to use real Gemini judging.
+The free Gemini tier has a small daily request limit. To work on the UI without spending quota, set `MOCK = true` in `background.js`. No API calls are made and verdicts come from simple rules. Set it back to `false` for real Gemini judging.
 
 ## How it works
 
@@ -91,10 +128,6 @@ The free Gemini tier has a small daily request limit. To work on the UI without 
 | `fonts/` | Jersey 10 pixel font (OFL license) |
 | `tools/make_sprites.py` | Generates the pixel-art sprites |
 
-### Adding a sidekick
-
-No code changes needed: create `personas/<id>/` with a `persona.json` and mood images (`happy`, `neutral`, `sad`, `angry`; only `neutral` is required, missing moods fall back to it), add the id to `personas/index.json`, and reload the extension. Copy an existing `persona.json` as a template.
-
 ## Privacy
 
 Moegotchi has to look at what you browse in order to work, so here is exactly what leaves your machine:
@@ -117,7 +150,7 @@ You can turn the extension off at any time from `chrome://extensions`.
 
 ## What's next
 
-- Official art for the SURGE otters, and more sidekicks and customization
+- Official art for every mascot, plus more sidekicks and customization
 - To-do lists using Gemini function calling
 - Chatting with your sidekick
 - Pet evolution and unlockables
