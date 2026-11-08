@@ -5,6 +5,7 @@ const getDere = () => document.querySelector('input[name="dere"]:checked')?.valu
 const setDere = (d) => {
   const tile = $(`d-${d}`) || document.querySelector('input[name="dere"]');
   if (tile) tile.checked = true;
+  showDereInfo();
 };
 
 $("bar").innerHTML = '<div class="seg"></div>'.repeat(10);
@@ -19,19 +20,22 @@ async function loadPersonas() {
   return personas;
 }
 
-// One radio tile per persona (textContent, not innerHTML: persona files are data, not markup)
+// One compact radio tile per persona (textContent, not innerHTML: persona files are data, not markup).
+// The tagline is a hover tooltip on the tile, and shown under the grid for the picked persona.
 function renderDereTiles() {
   for (const [id, p] of Object.entries(personas)) {
     const input = Object.assign(document.createElement("input"), { type: "radio", name: "dere", id: `d-${id}`, value: id });
     const label = document.createElement("label");
     label.htmlFor = input.id;
-    const name = document.createElement("b");
-    name.textContent = p.name || id;
-    const tagline = document.createElement("span");
-    tagline.textContent = p.tagline || "";
-    label.append(name, tagline);
+    label.textContent = p.name || id;
+    label.title = p.tagline || "";
+    input.onchange = showDereInfo;
     $("dere").append(input, label);
   }
+}
+function showDereInfo() {
+  const p = personas[getDere()];
+  $("dereInfo").textContent = p ? `${p.name}: ${p.tagline || ""}` : "";
 }
 
 // Header sprite: the saved persona's image for the current mood, neutral if that mood has no image
